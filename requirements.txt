@@ -1,5 +1,7 @@
 altair
 numpy
+seaborn
+plotly
+
 pandas
-pydeck
 streamlit
