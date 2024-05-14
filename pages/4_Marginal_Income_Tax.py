@@ -6,14 +6,19 @@ import numpy as np
 
 import seaborn as sns
 import matplotlib.pyplot as plt
+
+from streamlit.logger import get_logger
 from matplotlib.ticker import PercentFormatter
+
+logger = get_logger(__name__)
+
 
 WIDTH = 3.6
 ASPECT = 1.6
 HEIGHT = WIDTH / ASPECT
 DPI = 300
 TRANSPARENT = False 
-USE_TEX = False
+USE_TEX = True
 CONTEXT = "paper"
 STYLE = "white"
 PALETTE = "crest"
@@ -79,41 +84,85 @@ tax_schedule_frame = st.data_editor(
 tax_schedule_frame = tax_schedule_frame.assign(
     bracket_start=lambda row: row.bracket_start_step.cumsum(),
     bracket_base=lambda row: (row.bracket_start_step * 
-                              row.rate.shift(fill_value=0., periods=1)).cumsum()
+                              row.rate.shift(+1, fill_value=0.)).cumsum()
 )
 
-income = np.logspace(3., 8., num=4096)  # adjusted gross income
-bracket_index = tax_schedule_frame.bracket_start.searchsorted(income, side='left') - 1
+st.write(tax_schedule_frame)
 
-tax_liability = tax_schedule_frame.bracket_base.iloc[bracket_index] + \
-    tax_schedule_frame.rate.iloc[bracket_index] * \
-    (income - tax_schedule_frame.bracket_start.iloc[bracket_index])
+# income = np.logspace(3., 8., num=64)  # adjusted gross income
+income = np.arange(500., 10_000_000., 2_500)  # adjusted gross income
 
-data = pd.DataFrame(dict(income=income, tax_liability=tax_liability)) \
-    .assign(effective_rate=lambda row: row.tax_liability / row.income,
-            net_income=lambda row: row.income - row.tax_liability)
+# nonnegative amount by which income exceeds the start of each bracket
+income_over_bracket_start = np.maximum(0., np.subtract.outer(income, tax_schedule_frame.bracket_start.to_numpy()))
+income_by_bracket = np.minimum(income_over_bracket_start, tax_schedule_frame.bracket_start_step.shift(-1, fill_value=np.inf))
 
-st.write(data)
+np.testing.assert_array_equal(income, income_by_bracket.sum(axis=-1))
 
-fig, ax = plt.subplots()
+st.write(income_by_bracket * tax_schedule_frame.rate.to_numpy())
 
-sns.lineplot(x='income', y="effective_rate",
-             # hue=r"$\omega$", 
-             # style='kind',
-             # hue=r'$L$', hue_norm=LogNorm(),
-             # units='component', estimator=None,
-             # legend='brief',
-             # linewidth=.1, alpha=.8,
-             # palette='vlag',
-             data=data, ax=ax)
 
-ax.set_xscale('log')
-ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.))
 
-ax.set_xlabel('taxable income (\$)')
-ax.set_ylabel('effective tax rate')
+# .clip(
+#     tax_schedule_frame.bracket_start, 
+#     tax_schedule_frame.bracket_start.shift(-1, fill_value=np.inf)
+# )
 
-st.pyplot(fig=fig, clear_figure=True, use_container_width=True)
+
+# st.write(income_over_bracket_start.clip(0., tax_schedule_frame.bracket_start_step.shift(-1, fill_value=np.inf)))
+
+# st.write(np.minimum(np.maximum(0., income[..., np.newaxis] - tax_schedule_frame.bracket_start.to_numpy()), tax_schedule_frame.bracket_start_step.shift(-1, fill_value=np.inf)))
+# st.write((income[..., np.newaxis] - tax_schedule_frame.bracket_start.to_numpy()).clip(
+#         0.,
+#         tax_schedule_frame.bracket_start_step.shift(-1, fill_value=np.inf)
+#     )
+# )
+
+st.write(tax_schedule_frame.bracket_start_step.shift(-1, fill_value=np.inf))
+st.write(tax_schedule_frame.bracket_start.shift(-1) - tax_schedule_frame.bracket_start)
+
+logger.info(f"income: {income.shape}")
+
+logger.info(f"tax_schedule_frame.bracket_start: {tax_schedule_frame.bracket_start}")
+logger.info(f"tax_schedule_frame.bracket_start: {tax_schedule_frame.bracket_start.shift(-1, fill_value=None).to_numpy()}")
+
+# st.write(income_frame.clip(tax_schedule_frame.bracket_start, 
+#                            tax_schedule_frame.bracket_start.shift(+1), 
+#                            axis='columns'))
+
+# st.write(income[..., np.newaxis] - tax_schedule_frame.bracket_start.to_numpy())
+# st.write(np.minimum(tax_schedule_frame.bracket_start.shift(-1).to_numpy(), np.maximum(tax_schedule_frame.bracket_start.to_numpy(), income[..., np.newaxis])) - tax_schedule_frame.bracket_start.to_numpy())
+
+# bracket_index = tax_schedule_frame.bracket_start.searchsorted(income, side='left') - 1
+
+# tax_liability = tax_schedule_frame.bracket_base.iloc[bracket_index] + \
+#     tax_schedule_frame.rate.iloc[bracket_index] * \
+#     (income - tax_schedule_frame.bracket_start.iloc[bracket_index])
+
+# data = pd.DataFrame(dict(income=income, tax_liability=tax_liability)) \
+#     .assign(effective_rate=lambda row: row.tax_liability / row.income,
+#             net_income=lambda row: row.income - row.tax_liability)
+
+# st.write(data)
+
+# fig, ax = plt.subplots()
+
+# sns.lineplot(x='income', y="effective_rate",
+#              # hue=r"$\omega$", 
+#              # style='kind',
+#              # hue=r'$L$', hue_norm=LogNorm(),
+#              # units='component', estimator=None,
+#              # legend='brief',
+#              # linewidth=.1, alpha=.8,
+#              # palette='vlag',
+#              data=data, ax=ax)
+
+# ax.set_xscale('log')
+# ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.))
+
+# ax.set_xlabel('taxable income (\\$)')
+# ax.set_ylabel('effective tax rate')
+
+# st.pyplot(fig=fig, clear_figure=True, use_container_width=True)
 
 st.divider()
 
