@@ -14,8 +14,32 @@ import matplotlib.pyplot as plt
 from functools import partial
 from streamlit.logger import get_logger
 
-N_ROWS = 5
-LOG10_LENGTH_SCALE = 1.
+rc = {
+    # "figure.figsize": figsize,
+    # "figure.dpi": dpi,
+    # "font.serif": ["Palatino", "Times", "Computer Modern"],
+    "text.usetex": True,
+    "text.latex.preamble": r"\usepackage{bm}" 
+                           r"\usepackage{nicefrac}",
+    # "savefig.dpi": dpi,
+    "savefig.transparent": True,
+    # "axes.facecolor": (0, 0, 0, 0)
+}
+sns.set_theme(  # context=context, style=style, palette=palette, 
+    style="white",
+    font="serif", 
+    rc=rc
+)
+
+N_TEST = 1 << 9
+N_ROWS = 8
+
+OBSERVATION_NOISE_VARIANCE = 0.
+JITTER = 1e-9
+SEED = 42
+
+
+random_state = np.random.RandomState(SEED)
 
 logger = get_logger(__name__)
 
@@ -44,7 +68,7 @@ def default_float():
 
 st.set_page_config(page_title="Input Warping", page_icon="🌍")
 
-st.sidebar.header("Kernel ")
+# st.sidebar.header("Kernel ")
 
 st.markdown(
     """
@@ -81,7 +105,7 @@ st.markdown(
     """
 )
 
-x1 = np.linspace(0., 1., 512)
+x1 = np.linspace(0., 1., N_TEST)
 x2 = np.linspace(0., 1., N_ROWS)
 
 X1 = x1[..., np.newaxis]
@@ -92,16 +116,25 @@ with st.sidebar:
                           options=kernel_names.keys(),
                           format_func=kernel_names.get)
 
+    log10_length_scale_value = tf.convert_to_tensor(
+        st.number_input("lengthscale ($\\log_{10}{\\ell}$)", value=-1., step=.1),
+        dtype=default_float()
+    )
+    log10_amplitude_value = tf.convert_to_tensor(
+        st.number_input("amplitude ($\\log_{10}{\\alpha}$)", value=0., step=.1),
+        dtype=default_float()
+    )
+
     st.divider()
     st.header("Warping Function")
     st.subheader("Kumaraswamy CDF")
 
     ln_concentration1_value = tf.convert_to_tensor(
-        st.number_input("shape $\\ln{a}$", value=0., step=.25),
+        st.number_input("shape ($\\ln{a}$)", value=0., step=.25),
         dtype=default_float()
     )
     ln_concentration0_value = tf.convert_to_tensor(
-        st.number_input("shape $\\ln{b}$", value=0., step=.25),
+        st.number_input("shape ($\\ln{b}$)", value=0., step=.25),
         dtype=default_float()
     )
 
@@ -113,7 +146,8 @@ with st.sidebar:
 
     kernel_class = kernel_classes[kernel_key]
     kernel = kernel_class(
-        inverse_length_scale=10.**(-tf.constant(LOG10_LENGTH_SCALE, dtype=default_float()))  # tf.constant(10., shape=(), dtype=default_float())
+        inverse_length_scale=.1**log10_length_scale_value,
+        amplitude=10.**log10_amplitude_value,
     )
 
     kernel_warped = tfp.math.psd_kernels.KumaraswamyTransformed(
@@ -138,65 +172,125 @@ with st.sidebar:
 
     data = pd.DataFrame({'x': x1, 'w(x)': warping_fn(x1)})
 
-    chart = alt.Chart(data) \
+    warping_chart = alt.Chart(data) \
         .mark_line() \
         .encode(
-            x=alt.X('x', type='quantitative'), 
-            y=alt.Y('w(x)', type='quantitative'),
+            alt.X('x:Q'), 
+            alt.Y('w(x):Q'),
+        ).properties(
+            height=200,
+            width=200
         )
 
-    st.altair_chart(chart, use_container_width=True)
+    # st.altair_chart(chart, use_container_width=True)
 
     st.divider()
 
-    st.markdown("https://tiao.io/ @louistiao @ltiao")
-
+    st.markdown("A demo by [Louis Tiao](https://tiao.io/) (Twitter/X @louistiao, GitHub @ltiao)")
 
 K = kernel_warped.matrix(X1, X2).numpy()
 
-st.write(K)
-
-frames = []
-for i, u in enumerate(x2):
-    frame = pd.DataFrame(dict(x1=x1, x2=u, k=K[..., i]))
-    frames.append(frame)
+frames = [pd.DataFrame(dict(x1=x1, x2=u, k=K[..., i])) 
+          for i, u in enumerate(x2)]
 
 data = pd.concat(frames, axis="index", sort=True)
-st.dataframe(data, use_container_width=True)
 
-palette = sns.cubehelix_palette(10, rot=-.25, light=.7)
-g = sns.FacetGrid(data, row="x2", hue="x2", aspect=8, height=1.2, palette=palette)
+# st.dataframe(data, use_container_width=True)
 
-
-# Define and use a simple function to label the plot in axes coordinates
-def label(x, color, label):
-    ax = plt.gca()
-    ax.text(0, .2, fr"$x'={float(label):.3f}$", fontweight="bold", color=color,
-            ha="left", va="center", transform=ax.transAxes)
+# palette = sns.cubehelix_palette(N_ROWS, rot=-.25, light=.7)
+# g = sns.FacetGrid(data, row="x2", hue="x2", aspect=8., height=1.2, palette=palette)
 
 
-def fn(x1, k, color, label, *args, **kwargs):
-
-    logger.info(x1)
-    logger.info(k)
-
-    logger.info(args)
-    logger.info(kwargs)
-
-    ax = plt.gca()
-    ax.fill_between(x1, k, color=color, alpha=.95)
+# # Define and use a simple function to label the plot in axes coordinates
+# def label(x, color, label):
+#     ax = plt.gca()
+#     ax.text(0., .2, f"$x'={float(label):.2f}$", fontweight="bold", color=color,
+#             ha="left", va="center", transform=ax.transAxes)
 
 
-g.map(fn, "x1", "k")
-g.map(plt.plot, "x1", "k", color='w', lw=2,)
+# def fn(x, k, color, label, *args, **kwargs):
+#     ax = plt.gca()
+#     ax.fill_between(x, k, color=color, alpha=.95)
 
-g.refline(y=0, linewidth=2, linestyle="-", color=None, clip_on=False)
-g.map(label, "x1")
 
-g.figure.subplots_adjust(hspace=-.4)
+# g.map(fn, "x1", "k")
+# g.map(plt.plot, "x1", "k", color='w', lw=2.)
 
-g.set_titles("")
-g.set(yticks=[], ylabel="")
-g.despine(bottom=True, left=True)
+# g.refline(y=0., linewidth=2., linestyle="-", color=None, clip_on=False)
+# g.map(label, "x1")
 
-st.pyplot(fig=g.figure, clear_figure=True, use_container_width=True)
+# g.figure.subplots_adjust(hspace=-.5)
+
+# g.set_titles("")
+# g.set(yticks=[], ylabel="")
+# g.despine(bottom=True, left=True)
+
+# st.pyplot(fig=g.figure, clear_figure=True, use_container_width=True)
+
+step = 32.
+overlap = 1.
+
+kernel_ridgeline_chart = alt.Chart(data, height=step) \
+    .mark_area(interpolate='linear',
+               fillOpacity=0.8,
+               stroke='white',
+               strokeWidth=1.6) \
+    .encode(alt.X('x1:Q').title('x'), 
+            alt.Y('k:Q')
+               .axis(None)
+               .scale(range=[+step, -step * overlap]),
+            alt.Fill('x2:Q')
+               .legend(None)
+               .scale(scheme='tealblues')) \
+    .facet(row=alt.Row('x2:Q')
+                  .title("x'")
+                  .header(labelAngle=0., labelAlign='left', format='.3f')) \
+    .properties(bounds='flush', 
+                # title='Input-warped covariance function',
+                )
+    # .configure_facet(spacing=0.) \
+    # .configure_axis(grid=False) \
+    # .configure_view(stroke=None) \
+    # .configure_title(anchor='end')
+
+gaussian_process = tfd.GaussianProcess(
+    kernel_warped,
+    index_points=X1,
+    observation_noise_variance=OBSERVATION_NOISE_VARIANCE,
+    jitter=JITTER,
+)
+logger.info(f"Gaussian process: {gaussian_process}")
+
+N_SAMPLES = 3
+
+eps = random_state.randn(N_SAMPLES, N_TEST)
+
+logger.info(f"Normal sample: {eps}")
+
+Y = gaussian_process.get_marginal_distribution() \
+    .bijector.forward(eps).numpy()
+
+st.write(Y)
+
+frames = [pd.DataFrame(dict(sample=i+1, x=x1, y=Y[i])) 
+          for i in range(N_SAMPLES)]
+data = pd.concat(frames, axis="index", sort=True)
+
+st.write(data)
+
+samples_chart = alt.Chart(data) \
+    .mark_line(clip=True) \
+    .encode(
+        alt.X('x:Q'), 
+        alt.Y('y:Q')
+        .title('f(x)')
+        .scale(domain=(-3.6, +3.6)),
+        alt.Color('sample:N')
+        .legend(None)
+        # .scale(scheme='tableau10')
+    ).properties(
+        height=300,
+        width=600
+    )
+
+st.altair_chart(samples_chart & (warping_chart | kernel_ridgeline_chart))
