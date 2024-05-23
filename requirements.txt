@@ -8,3 +8,4 @@ streamlit
 
 tensorflow
 tensorflow-probability
+tf-keras
